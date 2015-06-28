@@ -10,7 +10,7 @@ import gui
 
 
 class pyTetris:
-    CLOCK_DELAY = 200 # milisseconds
+    CLOCK_DELAY = 150 # milisseconds
     FPS = 30
     SCREEN_W = 400
     SCREEN_H = 580
@@ -52,6 +52,8 @@ class pyTetris:
         # first update happen
         self.last_update = 0
 
+        self.score = 10
+        self.player_score = 0
         self.gameOver = False
 
     def _init_pieces(self):
@@ -102,7 +104,7 @@ class pyTetris:
             # erase previous state' screen and redraws GUI
 
             self.screen.fill((0, 0, 0))
-            self.gui_manager.refresh(0, 0, self.next_piece)
+            self.gui_manager.refresh(self.player_score, 0, self.next_piece)
             self.paint_matrix()
             self.current_piece.draw_piece(self.cursor_x, self.cursor_y, self.screen)
 
@@ -116,24 +118,29 @@ class pyTetris:
                     # there is no need to multiply the piece's size by its size, since the cursor is on the top-lefr
                     # corner of the object and moving to left is shifting one (free) unit to the right
 
+                    # moving left
                     if event.key == pygame.K_LEFT and self.digital_x - 1 >= 0 and not \
                             self._intersects(self.digital_x - 1, self.digital_y, self.current_piece):
                         self.cursor_x -= piece.BIG_BLOCK
                         self.digital_x -= 1
 
-                    # fix for many pieces
+                    # moving right
                     if event.key == pygame.K_RIGHT and self.digital_x + self.current_piece.get_dimensions()[1] < \
                             self.DISPLAY_W and not self._intersects(self.digital_x + 1,
                                                                     self.digital_y, self.current_piece):
                         self.cursor_x += piece.BIG_BLOCK
                         self.digital_x += 1
 
-                    # improve
+                    # rotating
                     if event.key == pygame.K_UP:
                         if self.cursor_x + piece.BIG_BLOCK * self.current_piece.get_rotated_dimensions()[1] <= self.gui_manager.AREA_LIMIT_X \
                             and self.cursor_y + piece.BIG_BLOCK * self.current_piece.get_rotated_dimensions()[0] <= self.gui_manager.AREA_LIMIT_Y:
                                 self.current_piece.rotate()
 
+                                # after rotating, checks if this won' overlap any piece, if it does, then go back to the
+                                # original form
+                                if self._intersects(self.digital_x, self.digital_y, self.current_piece):
+                                    self.current_piece.rotate()
 
             if pygame.time.get_ticks() - self.last_update > self.CLOCK_DELAY:
                 # checking if this piece can fall
@@ -142,8 +149,6 @@ class pyTetris:
                 if self.digital_y + self.current_piece.get_dimensions()[0] + 1 > self.DISPLAY_H:
                     moving = False
                 else:
-                    print '>> %d, %d' % (self.current_piece.get_dimensions()[0], self.current_piece.get_dimensions()[1])
-                    print '$$ %d, %d' % (self.digital_x, self.digital_y)
 
                     for i in range(self.current_piece.get_dimensions()[0]):
                         for j in range(self.current_piece.get_dimensions()[1]):
@@ -163,10 +168,60 @@ class pyTetris:
                             if (self.current_piece.working_shape[i][j] != 0):
                                 self.display[self.digital_y + i][self.digital_x + j] = tag
 
-                    # print self.display
 
+                    #verify if any current line is full
+                    dead_lines = np.array([False] * self.current_piece.get_dimensions()[0])
+                    score_due = 0
+
+                    # checking for dead lines
+                    counter = 0
+                    for i in range(self.digital_y + self.current_piece.get_dimensions()[0] - 1, self.digital_y - 1, -1):
+                        for j in range(self.DISPLAY_W):
+                            if self.display[i][j] == 0: break
+                        else:
+                            dead_lines[counter] = True
+                            self.player_score += self.score
+                        counter += 1
+
+                    if np.any(dead_lines):
+                        new_display = np.zeros(shape=(self.DISPLAY_H, self.DISPLAY_W), dtype=np.int8)
+
+                        # find the first dead line
+                        for i in range(dead_lines.shape[0]):
+                            if dead_lines[i]:
+                                dead_index = i
+                                break
+
+                        # dead_index = piece_position + its height - 1 - first dead line pos
+                        # the -1 is because the cursor is already at the first piece's square
+                        old_index = self.digital_y + self.current_piece.get_dimensions()[0] - 1 - dead_index
+                        new_index = old_index
+
+                        # copy all the previous unafected lines
+                        new_display[self.DISPLAY_H - 1: new_index: -1, ] = self.display[self.DISPLAY_H - 1: old_index: -1, ]
+
+                        dead_index += 1
+                        old_index -= 1
+
+                        # copy the non-dead lines
+                        for counter in range(dead_index, dead_lines.shape[0]):
+                            if not dead_lines[counter]:
+                                new_display[new_index] = self.display[old_index]
+                                new_index -= 1
+                            old_index -= 1
+
+                        # copy the remaining lines
+                        for i in range(old_index, -1, -1):
+                            new_display[new_index,] = self.display[i,]
+                            new_index -= 1
+
+                        # update the display
+                        self.display = new_display
+
+                    # reset the piece holder object to its original configuration
                     self.current_piece.reset()
 
+                    # generate a new piece and resets the game cycle
                     self._reset_cursor()
                     self.current_piece = self.next_piece
                     self.next_piece = self.pieces[randint(0, len(self.pieces) - 1)]
